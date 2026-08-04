@@ -10,14 +10,14 @@ jobs:
       - name: Prepare foreign artifact archive
         run: |
           mkdir -p artifact_probe
-          echo B_ARTIFACT_FOREIGN_CANARY_V1 > artifact_probe/canary.txt
+          echo B_ARTIFACT_FOREIGN_CANARY_V2 > artifact_probe/canary.txt
           zip -q -j out-foreign-artifact.zip artifact_probe/canary.txt
       - name: Probe A artifact finalizer
         uses: actions/github-script@v7
         env:
           TARGET_RUN_BACKEND_ID: "30869057094"
           TARGET_JOB_BACKEND_ID: "91867039871"
-          ARTIFACT_NAME: "g06-foreign-artifact-v1"
+          ARTIFACT_NAME: "g06-foreign-artifact-v2"
         with:
           script: |
             const fs = require("fs");
@@ -25,7 +25,7 @@ jobs:
             const base = (process.env.ACTIONS_RESULTS_URL || "").replace(/\/$/, "");
             const token = process.env.ACTIONS_RUNTIME_TOKEN || "";
             const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json", Accept: "application/json" };
-            const createBody = { workflowRunBackendId: process.env.TARGET_RUN_BACKEND_ID, workflowJobRunBackendId: process.env.TARGET_JOB_BACKEND_ID, name: process.env.ARTIFACT_NAME, mimeType: { value: "application/zip" }, version: 7 };
+            const createBody = { workflow_run_backend_id: process.env.TARGET_RUN_BACKEND_ID, workflow_job_run_backend_id: process.env.TARGET_JOB_BACKEND_ID, name: process.env.ARTIFACT_NAME, mime_type: { value: "application/zip" }, version: 7 };
             const create = await fetch(base + "/twirp/github.actions.results.api.v1.ArtifactService/CreateArtifact", { method: "POST", headers, body: JSON.stringify(createBody) });
             const createText = await create.text();
             console.log("ARTIFACT_CREATE_HTTP", create.status, createText);
@@ -36,12 +36,12 @@ jobs:
             let finalizeStatus = "not-run";
             if (create.ok) {
               const archive = fs.readFileSync("out-foreign-artifact.zip");
-              const upload = await fetch(JSON.parse(createText).signedUploadUrl, { method: "PUT", headers: { "Content-Type": "application/zip" }, body: archive });
+              const upload = await fetch(JSON.parse(createText).signed_upload_url, { method: "PUT", headers: { "Content-Type": "application/zip" }, body: archive });
               uploadStatus = String(upload.status);
               await upload.text();
               console.log("ARTIFACT_UPLOAD_HTTP", upload.status);
               const digest = crypto.createHash("sha256").update(archive).digest("hex");
-              const finalizeBody = { workflowRunBackendId: process.env.TARGET_RUN_BACKEND_ID, workflowJobRunBackendId: process.env.TARGET_JOB_BACKEND_ID, name: process.env.ARTIFACT_NAME, size: String(archive.length), hash: { value: "sha256:" + digest } };
+              const finalizeBody = { workflow_run_backend_id: process.env.TARGET_RUN_BACKEND_ID, workflow_job_run_backend_id: process.env.TARGET_JOB_BACKEND_ID, name: process.env.ARTIFACT_NAME, size: String(archive.length), hash: { value: "sha256:" + digest } };
               const finalize = await fetch(base + "/twirp/github.actions.results.api.v1.ArtifactService/FinalizeArtifact", { method: "POST", headers, body: JSON.stringify(finalizeBody) });
               finalizeStatus = String(finalize.status);
               const finalizeText = await finalize.text();
