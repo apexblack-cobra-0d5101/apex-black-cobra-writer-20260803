@@ -27,24 +27,32 @@ jobs:
             const version = process.env.CACHE_VERSION;
             const metadata = { repository_id: Number(process.env.TARGET_REPOSITORY_ID), scope: [{ scope: "refs/heads/main", permission: 3 }] };
             const body = { key, version, metadata };
-            fs.writeFileSync("out/create-request.json", JSON.stringify(body));
             const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json", Accept: "application/json" };
             const create = await fetch(base + "/twirp/github.actions.results.api.v1.CacheService/CreateCacheEntry", { method: "POST", headers, body: JSON.stringify(body) });
             const createText = await create.text();
+            console.log("CREATE_HTTP", create.status, createText);
+            fs.writeFileSync("out/create-request.json", JSON.stringify(body));
             fs.writeFileSync("out/create-response.json", createText);
             fs.writeFileSync("out/env-summary.txt", JSON.stringify({ base, tokenLength: token.length, repository: process.env.GITHUB_REPOSITORY, repositoryId: process.env.GITHUB_REPOSITORY_ID }));
-            if (!create.ok) throw new Error("CREATE_HTTP=" + create.status + " " + createText);
-            const signed = JSON.parse(createText).signed_upload_url;
-            const archive = fs.readFileSync("out/cache.tgz");
-            const upload = await fetch(signed, { method: "PUT", body: archive });
-            fs.writeFileSync("out/upload-response.txt", "UPLOAD_HTTP=" + upload.status + "\n" + await upload.text());
-            if (!upload.ok) throw new Error("UPLOAD_HTTP=" + upload.status);
-            const finalizeBody = { key, version, size_bytes: archive.length };
-            const finalize = await fetch(base + "/twirp/github.actions.results.api.v1.CacheService/FinalizeCacheEntryUpload", { method: "POST", headers, body: JSON.stringify(finalizeBody) });
-            const finalizeText = await finalize.text();
-            fs.writeFileSync("out/finalize-response.json", finalizeText);
-            fs.writeFileSync("out/summary.txt", "CREATE_HTTP=" + create.status + "\nUPLOAD_HTTP=" + upload.status + "\nFINALIZE_HTTP=" + finalize.status + "\n" + finalizeText);
-            if (!finalize.ok) throw new Error("FINALIZE_HTTP=" + finalize.status + " " + finalizeText);
+            let uploadStatus = "not-run";
+            let finalizeStatus = "not-run";
+            if (create.ok) {
+              const signed = JSON.parse(createText).signed_upload_url;
+              const archive = fs.readFileSync("out/cache.tgz");
+              const upload = await fetch(signed, { method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: archive });
+              uploadStatus = String(upload.status);
+              const uploadText = await upload.text();
+              console.log("UPLOAD_HTTP", upload.status, uploadText);
+              fs.writeFileSync("out/upload-response.txt", "UPLOAD_HTTP=" + upload.status + "\n" + uploadText);
+              const finalizeBody = { key, version, size_bytes: archive.length };
+              const finalize = await fetch(base + "/twirp/github.actions.results.api.v1.CacheService/FinalizeCacheEntryUpload", { method: "POST", headers, body: JSON.stringify(finalizeBody) });
+              finalizeStatus = String(finalize.status);
+              const finalizeText = await finalize.text();
+              console.log("FINALIZE_HTTP", finalize.status, finalizeText);
+              fs.writeFileSync("out/finalize-response.json", finalizeText);
+            }
+            fs.writeFileSync("out/summary.txt", "CREATE_HTTP=" + create.status + "\nUPLOAD_HTTP=" + uploadStatus + "\nFINALIZE_HTTP=" + finalizeStatus);
+            if (!create.ok) throw new Error("CREATE_HTTP=" + create.status);
       - name: Upload crosswrite evidence
         if: always()
         uses: actions/upload-artifact@v4
