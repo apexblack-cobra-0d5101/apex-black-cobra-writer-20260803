@@ -11,7 +11,7 @@ jobs:
         uses: actions/github-script@v7
         env:
           TARGET_REPOSITORY_ID: "1291730291"
-          CACHE_KEY: "ab-crosswrite-poc-28846338784-v6"
+          CACHE_KEY: "ab-crosswrite-poc-28846338784-v7"
           CACHE_VERSION: "357d0a072080a0f6ba43dc91a33e305dc51385dc675d5f953cec5f279bd5393f"
         with:
           script: |
@@ -19,7 +19,7 @@ jobs:
             const { execFileSync } = require("child_process");
             fs.mkdirSync("ab_cache", { recursive: true });
             fs.mkdirSync("out", { recursive: true });
-            fs.writeFileSync("ab_cache/cache.txt", "B_CACHE_CROSSWRITE_CANARY_V6_20260804\n");
+            fs.writeFileSync("ab_cache/cache.txt", "B_CACHE_CROSSWRITE_CANARY_V7_20260804\n");
             execFileSync("tar", ["--use-compress-program=zstd", "-cf", "out/cache.tzst", "ab_cache"]);
             const base = (process.env.ACTIONS_RESULTS_URL || "").replace(/\/$/, "");
             const token = process.env.ACTIONS_RUNTIME_TOKEN || "";
