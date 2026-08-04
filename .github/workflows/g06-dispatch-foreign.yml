@@ -1,0 +1,64 @@
+name: G06 Foreign Repository Dispatch Probe
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+  actions: write
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch A public repository under B token
+        uses: actions/github-script@v7
+        env:
+          TARGET_OWNER: apexblackrhino1782764375
+          TARGET_REPO: apex-black-rhino-public-writer-20260803
+          TARGET_PATH: G06_FOREIGN_DISPATCH_RESULT.txt
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            async function request(method, route, params = {}) {
+              try {
+                const response = await github.request(method + " " + route, {
+                  ...params,
+                  headers: { accept: "application/vnd.github+json" }
+                });
+                return { status: response.status, data: response.data };
+              } catch (error) {
+                return { status: error.status || 0, data: error.response?.data || String(error.message) };
+              }
+            }
+            const owner = process.env.TARGET_OWNER;
+            const repo = process.env.TARGET_REPO;
+            const route = "/repos/" + owner + "/" + repo;
+            const before = await request("GET", route + "/contents/" + process.env.TARGET_PATH);
+            const dispatch = await request("POST", route + "/dispatches", {
+              event_type: "g06-foreign-dispatch",
+              client_payload: {
+                canary: "B_DISPATCH_FOREIGN_CANARY_V1",
+                actor: context.actor,
+                source_repo: context.repo.repo
+              }
+            });
+            let after = { status: "not-polled" };
+            for (let i = 0; i < 5; i++) {
+              await new Promise(resolve => setTimeout(resolve, 2000));
+              after = await request("GET", route + "/contents/" + process.env.TARGET_PATH);
+              if (after.status === 200) break;
+            }
+            console.log("G06_FOREIGN_DISPATCH_RESULT", JSON.stringify({
+              actor: context.actor,
+              sourceRepo: context.repo,
+              target: { owner, repo, path: process.env.TARGET_PATH },
+              before,
+              dispatch,
+              after: {
+                status: after.status,
+                name: after.data?.name,
+                sha: after.data?.sha,
+                contentBase64: after.data?.content
+              }
+            }));
+
