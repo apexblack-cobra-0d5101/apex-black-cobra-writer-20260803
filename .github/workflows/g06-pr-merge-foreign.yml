@@ -15,7 +15,7 @@ jobs:
         env:
           TARGET_OWNER: apexblackrhino1782764375
           TARGET_REPO: apex-black-rhino-public-writer-20260803
-          TARGET_PR: "2"
+          TARGET_PR: "3"
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -33,18 +33,4 @@ jobs:
             const route = "/repos/" + process.env.TARGET_OWNER + "/" + process.env.TARGET_REPO;
             const before = await request("GET", route + "/pulls/" + process.env.TARGET_PR);
             const merge = await request("PUT", route + "/pulls/" + process.env.TARGET_PR + "/merge", {
-              commit_title: "G06 foreign merge canary",
-              commit_message: "B unauthorized merge probe",
-              merge_method: "merge"
-            });
-            const after = await request("GET", route + "/pulls/" + process.env.TARGET_PR);
-            console.log("G06_FOREIGN_PR_MERGE_RESULT", JSON.stringify({
-              actor: context.actor,
-              currentRepo: context.repo,
-              target: { owner: process.env.TARGET_OWNER, repo: process.env.TARGET_REPO, pr: process.env.TARGET_PR },
-              before,
-              merge,
-              after
-            }));
-
-# trigger follow-up
+              commit_title: "G06 foreign fork merge canary",
