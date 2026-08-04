@@ -1,0 +1,37 @@
+name: G06 Foreign Ruleset API Probe V2
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+  actions: write
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe ruleset source of truth
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          target=apexblackrhino1782764375/apex-black-rhino-public-writer-20260803
+          owner=apexblack-cobra-0d5101/apex-black-cobra-writer-20260803
+          api=https://api.github.com/repos
+          name=G06_FOREIGN_RULESET_V2_20260804
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+          body="{\"name\":\"$name\",\"target\":\"branch\",\"enforcement\":\"disabled\",\"conditions\":{\"ref_name\":{\"include\":[\"~DEFAULT_BRANCH\"],\"exclude\":[]}},\"rules\":[{\"type\":\"deletion\"}],\"bypass_actors\":[]}"
+          echo "FOREIGN_BEFORE_STATUS=$(curl -sS -o /tmp/fbefore -w "%{http_code}" "${auth[@]}" "$api/$target/rulesets")"
+          head -c 500 /tmp/fbefore
+          echo
+          echo "OWNER_CREATE_STATUS=$(curl -sS -o /tmp/ocreate -w "%{http_code}" -X POST "${auth[@]}" -H "Content-Type: application/json" "$api/$owner/rulesets" --data "$body")"
+          head -c 500 /tmp/ocreate
+          echo
+          echo "FOREIGN_CREATE_STATUS=$(curl -sS -o /tmp/fcreate -w "%{http_code}" -X POST "${auth[@]}" -H "Content-Type: application/json" "$api/$target/rulesets" --data "$body")"
+          head -c 500 /tmp/fcreate
+          echo
+          echo "FOREIGN_AFTER_STATUS=$(curl -sS -o /tmp/fafter -w "%{http_code}" "${auth[@]}" "$api/$target/rulesets")"
+          head -c 500 /tmp/fafter
+          echo
+
