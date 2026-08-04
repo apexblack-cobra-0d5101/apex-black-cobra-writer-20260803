@@ -1,0 +1,1 @@
+G06_FOREIGN_PR_SOURCE_CANARY_20260804\nActor B controlled source branch for merge-finalizer authorization test.\n
