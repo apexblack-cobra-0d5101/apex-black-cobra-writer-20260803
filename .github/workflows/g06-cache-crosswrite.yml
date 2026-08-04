@@ -26,8 +26,8 @@ jobs:
             const key = process.env.CACHE_KEY;
             const version = process.env.CACHE_VERSION;
             const metadata = { repository_id: Number(process.env.TARGET_REPOSITORY_ID), scope: [{ scope: "refs/heads/main", permission: 3 }] };
-            const body = { key, version, metadata };
             const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json", Accept: "application/json" };
+            const body = { key, version, metadata };
             const create = await fetch(base + "/twirp/github.actions.results.api.v1.CacheService/CreateCacheEntry", { method: "POST", headers, body: JSON.stringify(body) });
             const createText = await create.text();
             console.log("CREATE_HTTP", create.status, createText);
@@ -36,6 +36,8 @@ jobs:
             fs.writeFileSync("out/env-summary.txt", JSON.stringify({ base, tokenLength: token.length, repository: process.env.GITHUB_REPOSITORY, repositoryId: process.env.GITHUB_REPOSITORY_ID }));
             let uploadStatus = "not-run";
             let finalizeStatus = "not-run";
+            let lookupStatus = "not-run";
+            let downloadStatus = "not-run";
             if (create.ok) {
               const signed = JSON.parse(createText).signed_upload_url;
               const archive = fs.readFileSync("out/cache.tzst");
@@ -50,9 +52,29 @@ jobs:
               const finalizeText = await finalize.text();
               console.log("FINALIZE_HTTP", finalize.status, finalizeText);
               fs.writeFileSync("out/finalize-response.json", finalizeText);
+              const lookup = await fetch(base + "/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL", { method: "POST", headers, body: JSON.stringify({ metadata, key, version }) });
+              lookupStatus = String(lookup.status);
+              const lookupText = await lookup.text();
+              console.log("FOREIGN_NAMESPACE_LOOKUP_HTTP", lookup.status, lookupText);
+              fs.writeFileSync("out/foreign-lookup-response.json", lookupText);
+              if (lookup.ok) {
+                const foreignSigned = JSON.parse(lookupText).signed_download_url;
+                const foreignDownload = await fetch(foreignSigned);
+                downloadStatus = String(foreignDownload.status);
+                const foreignArchive = Buffer.from(await foreignDownload.arrayBuffer());
+                fs.writeFileSync("out/finalized-cache.tzst", foreignArchive);
+                fs.writeFileSync("out/foreign-download-response.txt", "FOREIGN_DOWNLOAD_HTTP=" + foreignDownload.status + " BYTES=" + foreignArchive.length);
+                if (foreignDownload.ok) {
+                  fs.mkdirSync("verified", { recursive: true });
+                  execFileSync("tar", ["--use-compress-program=zstd", "-xf", "out/finalized-cache.tzst", "-C", "verified"]);
+                  const finalCanary = fs.readFileSync("verified/ab_cache/cache.txt", "utf8").trim();
+                  console.log("FOREIGN_NAMESPACE_CANARY", finalCanary);
+                  fs.writeFileSync("out/foreign-consumer-proof.txt", "target_repository_id=" + process.env.TARGET_REPOSITORY_ID + "\ncanary=" + finalCanary + "\n");
+                }
+              }
             }
-            fs.writeFileSync("out/summary.txt", "CREATE_HTTP=" + create.status + "\nUPLOAD_HTTP=" + uploadStatus + "\nFINALIZE_HTTP=" + finalizeStatus);
-            if (!create.ok || !["200", "201"].includes(uploadStatus) || finalizeStatus !== "200") throw new Error("CACHE_WRITE_FAILED");
+            fs.writeFileSync("out/summary.txt", "CREATE_HTTP=" + create.status + "\nUPLOAD_HTTP=" + uploadStatus + "\nFINALIZE_HTTP=" + finalizeStatus + "\nFOREIGN_NAMESPACE_LOOKUP_HTTP=" + lookupStatus + "\nFOREIGN_NAMESPACE_DOWNLOAD_HTTP=" + downloadStatus);
+            if (!create.ok || !["200", "201"].includes(uploadStatus) || finalizeStatus !== "200" || lookupStatus !== "200" || downloadStatus !== "200") throw new Error("CACHE_WRITE_OR_READ_FAILED");
       - name: Upload crosswrite evidence
         if: always()
         uses: actions/upload-artifact@v4
