@@ -1,3 +1,72 @@
+name: G06 REST Artifact Delete Boundary Probe
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create B self-control artifact
+        run: |
+          mkdir -p control
+          echo B_SELF_DELETE_CONTROL_V1 > control/canary.txt
+      - name: Upload B self-control artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: g06-b-self-delete-control-v1
+          path: control/canary.txt
+      - name: Cross-actor artifact deletion probe
+        uses: actions/github-script@v7
+        env:
+          TARGET_OWNER: apexblackrhino1782764375
+          TARGET_REPO: ab-actions-isolation-1783396429
+          TARGET_ARTIFACT_ID: "8877183389"
+          CONTROL_ARTIFACT_NAME: g06-b-self-delete-control-v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require("fs");
+            const owner = process.env.TARGET_OWNER;
+            const repo = process.env.TARGET_REPO;
+            const id = Number(process.env.TARGET_ARTIFACT_ID);
+            async function request(method, path, params = {}) {
+              try {
+                const response = await github.request(method + " " + path, {
+                  ...params,
+                  headers: { accept: "application/vnd.github+json" }
+                });
+                return { status: response.status, data: response.data };
+              } catch (error) {
+                return { status: error.status || 0, data: error.response?.data || String(error.message) };
+              }
+            }
+            const foreignPath = "/repos/" + owner + "/" + repo + "/actions/artifacts/" + id;
+            const foreignBefore = await request("GET", foreignPath);
+            const foreignDelete = await request("DELETE", foreignPath);
+            const foreignAfter = await request("GET", foreignPath);
+            const listed = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: process.env.CONTROL_ARTIFACT_NAME
+            });
+            const selfId = listed.data.artifacts[0]?.id;
+            let selfDelete = { status: "not-found", data: listed.data };
+            if (selfId) {
+              selfDelete = await request("DELETE", "/repos/" + context.repo.owner + "/" + context.repo.repo + "/actions/artifacts/" + selfId);
+            }
+            const result = {
+              actor: context.actor,
+              currentRepo: context.repo,
+              foreignArtifact: { owner, repo, id },
+              foreignBefore,
+              foreignDelete,
+              foreignAfter,
+              selfControl: { name: process.env.CONTROL_ARTIFACT_NAME, selfId, selfDelete }
+            };
+            fs.mkdirSync("out-artifact-delete", { recursive: true });
+            fs.writeFileSync("out-artifact-delete/result.json", JSON.stringify(result, null, 2));
+            console.log("G06_ARTIFACT_DELETE_RESULT", JSON.stringify(result));
 name: G06 Artifact Foreign Finalizer Probe
 on:
   workflow_dispatch:
