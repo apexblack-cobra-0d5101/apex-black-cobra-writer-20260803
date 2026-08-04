@@ -1,0 +1,69 @@
+name: G06 Foreign Deployment Writer Probe
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  deployments: write
+  actions: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe foreign deployment and environment writers
+        uses: actions/github-script@v7
+        env:
+          TARGET_OWNER: apexblackrhino1782764375
+          TARGET_REPO: ab-actions-isolation-1783396429
+          TARGET_ENVIRONMENT: g06-production-v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            async function request(method, route, params = {}) {
+              try {
+                const response = await github.request(method + " " + route, {
+                  ...params,
+                  headers: { accept: "application/vnd.github+json" }
+                });
+                return { status: response.status, data: response.data };
+              } catch (error) {
+                return { status: error.status || 0, data: error.response?.data || String(error.message) };
+              }
+            }
+            const A = process.env.TARGET_OWNER;
+            const AR = process.env.TARGET_REPO;
+            const envRoute = "/repos/" + A + "/" + AR + "/environments/" + process.env.TARGET_ENVIRONMENT;
+            const foreignEnvBefore = await request("GET", envRoute);
+            const foreignDeployment = await request("POST", "/repos/" + A + "/" + AR + "/deployments", {
+              ref: "main",
+              environment: process.env.TARGET_ENVIRONMENT,
+              description: "B foreign deployment canary",
+              auto_merge: false,
+              required_contexts: []
+            });
+            const foreignDeployments = await request("GET", "/repos/" + A + "/" + AR + "/deployments?environment=" + encodeURIComponent(process.env.TARGET_ENVIRONMENT));
+            const foreignEnvDelete = await request("DELETE", envRoute);
+            const selfDeployment = await request("POST", "/repos/" + context.repo.owner + "/" + context.repo.repo + "/deployments", {
+              ref: "main",
+              environment: "g06-b-deployment-control-v1",
+              description: "B self deployment control",
+              auto_merge: false,
+              required_contexts: []
+            });
+            let selfDelete = { status: "not-run" };
+            if (selfDeployment.data?.id) {
+              selfDelete = await request("DELETE", "/repos/" + context.repo.owner + "/" + context.repo.repo + "/deployments/" + selfDeployment.data.id);
+            }
+            console.log("G06_FOREIGN_DEPLOYMENT_RESULT", JSON.stringify({
+              actor: context.actor,
+              currentRepo: context.repo,
+              target: { owner: A, repo: AR, environment: process.env.TARGET_ENVIRONMENT },
+              foreignEnvBefore,
+              foreignDeployment,
+              foreignDeployments,
+              foreignEnvDelete,
+              selfDeployment,
+              selfDelete
+            }));
+
