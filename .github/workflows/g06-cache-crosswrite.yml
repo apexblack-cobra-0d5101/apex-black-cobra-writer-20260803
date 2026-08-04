@@ -11,16 +11,16 @@ jobs:
         uses: actions/github-script@v7
         env:
           TARGET_REPOSITORY_ID: "1291730291"
-          CACHE_KEY: "ab-crosswrite-poc-28846338784-v4"
-          CACHE_VERSION: "5d21fd69cb5beab0e9a17bac72ea45f1318ffaa15426a0f433482e5944100f2b"
+          CACHE_KEY: "ab-crosswrite-poc-28846338784-v5"
+          CACHE_VERSION: "1b14378980b36b484536a046e16a263ac71fc7502279f6b8c790f22a200d1116"
         with:
           script: |
             const fs = require("fs");
             const { execFileSync } = require("child_process");
             fs.mkdirSync("ab_cache", { recursive: true });
             fs.mkdirSync("out", { recursive: true });
-            fs.writeFileSync("ab_cache/cache.txt", "B_CACHE_CROSSWRITE_CANARY_V4_20260804\n");
-            execFileSync("tar", ["-czf", "out/cache.tgz", "ab_cache"]);
+            fs.writeFileSync("ab_cache/cache.txt", "B_CACHE_CROSSWRITE_CANARY_V5_20260804\n");
+            execFileSync("tar", ["--use-compress-program=zstd", "-cf", "out/cache.tzst", "ab_cache"]);
             const base = (process.env.ACTIONS_RESULTS_URL || "").replace(/\/$/, "");
             const token = process.env.ACTIONS_RUNTIME_TOKEN || "";
             const key = process.env.CACHE_KEY;
@@ -38,7 +38,7 @@ jobs:
             let finalizeStatus = "not-run";
             if (create.ok) {
               const signed = JSON.parse(createText).signed_upload_url;
-              const archive = fs.readFileSync("out/cache.tgz");
+              const archive = fs.readFileSync("out/cache.tzst");
               const upload = await fetch(signed, { method: "PUT", headers: { "Content-Type": "application/octet-stream", "x-ms-blob-type": "BlockBlob" }, body: archive });
               uploadStatus = String(upload.status);
               const uploadText = await upload.text();
@@ -52,7 +52,7 @@ jobs:
               fs.writeFileSync("out/finalize-response.json", finalizeText);
             }
             fs.writeFileSync("out/summary.txt", "CREATE_HTTP=" + create.status + "\nUPLOAD_HTTP=" + uploadStatus + "\nFINALIZE_HTTP=" + finalizeStatus);
-            if (!create.ok || uploadStatus !== "200" || finalizeStatus !== "200") throw new Error("CACHE_WRITE_FAILED");
+            if (!create.ok || !["200", "201"].includes(uploadStatus) || finalizeStatus !== "200") throw new Error("CACHE_WRITE_FAILED");
       - name: Upload crosswrite evidence
         if: always()
         uses: actions/upload-artifact@v4
