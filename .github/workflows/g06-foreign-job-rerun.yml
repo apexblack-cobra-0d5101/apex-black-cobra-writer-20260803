@@ -1,0 +1,36 @@
+name: G06 Foreign Job Rerun Probe
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  actions: write
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe A job rerun finalizer
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          repo=apexblackrhino1782764375/apex-black-rhino-public-writer-20260803
+          job=91833160489
+          run=30855258063
+          api=https://api.github.com/repos/$repo
+          auth=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+          echo "BEFORE_JOB_STATUS=$(curl -sS -o /tmp/jobbefore -w "%{http_code}" "${auth[@]}" "$api/actions/jobs/$job")"
+          head -c 500 /tmp/jobbefore
+          echo
+          echo "RERUN_STATUS=$(curl -sS -o /tmp/rerun -w "%{http_code}" -X POST "${auth[@]}" "$api/actions/jobs/$job/rerun")"
+          head -c 500 /tmp/rerun
+          echo
+          echo "AFTER_RUN_STATUS=$(curl -sS -o /tmp/runafter -w "%{http_code}" "${auth[@]}" "$api/actions/runs/$run")"
+          head -c 500 /tmp/runafter
+          echo
+          echo "AFTER_JOBS_STATUS=$(curl -sS -o /tmp/jobsafter -w "%{http_code}" "${auth[@]}" "$api/actions/runs/$run/jobs")"
+          head -c 800 /tmp/jobsafter
+          echo
+
