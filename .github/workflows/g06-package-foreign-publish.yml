@@ -1,0 +1,49 @@
+name: G06 Foreign Package Publish Probe
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  packages: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Attempt A namespace package publish from B
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir package
+          cd package
+          printf '%s\n' '{"name":"@apexblackrhino1782764375/g06-foreign-package-v2","version":"1.0.1","description":"B foreign package publish canary","main":"index.js"}' > package.json
+          printf '%s\n' 'module.exports = "B_FOREIGN_PACKAGE_PUBLISH_CANARY_V1";' > index.js
+          printf '%s\n' '@apexblackrhino1782764375:registry=https://npm.pkg.github.com' > .npmrc
+          printf '%s\n' '//npm.pkg.github.com/:_authToken='${NODE_AUTH_TOKEN} >> .npmrc
+          npm publish --registry=https://npm.pkg.github.com
+      - name: Read package source of truth after publish attempt
+        uses: actions/github-script@v7
+        env:
+          TARGET_OWNER: apexblackrhino1782764375
+          TARGET_PACKAGE: g06-foreign-package-v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            async function request(method, route) {
+              try {
+                const response = await github.request(method + " " + route, {
+                  headers: { accept: "application/vnd.github+json" }
+                });
+                return { status: response.status, data: response.data };
+              } catch (error) {
+                return { status: error.status || 0, data: error.response?.data || String(error.message) };
+              }
+            }
+            const foreign = await request("GET", "/users/" + process.env.TARGET_OWNER + "/packages/npm/" + process.env.TARGET_PACKAGE + "/versions");
+            console.log("G06_FOREIGN_PACKAGE_PUBLISH_RESULT", JSON.stringify({
+              actor: context.actor,
+              currentRepo: context.repo,
+              target: { owner: process.env.TARGET_OWNER, package: process.env.TARGET_PACKAGE },
+              foreign
+            }));
+
