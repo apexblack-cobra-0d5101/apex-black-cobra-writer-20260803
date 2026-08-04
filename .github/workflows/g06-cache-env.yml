@@ -1,0 +1,27 @@
+name: G06 Cache Environment
+on:
+  workflow_dispatch:
+  push:
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create seed directory
+        run: mkdir -p consumer_seed
+      - name: Seed runner cache plumbing
+        uses: actions/cache@v4
+        with:
+          path: consumer_seed
+          key: cobra-env-seed-${{ github.run_id }}
+      - name: Capture injected endpoint names
+        shell: bash
+        run: |
+          set +e
+          env | sort | grep -Ei "ACTIONS|CACHE|RESULT|GITHUB_REPOSITORY" > injected-env.txt
+          true
+      - name: Upload environment proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: g06-cache-env-proof
+          path: injected-env.txt
